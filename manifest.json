@@ -1,11 +1,10 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
-	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+  "id": "ai-completer",
+  "name": "AI Completer",
+  "version": "0.0.2",
+  "minAppVersion": "0.15.0",
+  "description": "Rewrite selected text with AI based on your prompt.",
+  "author": "Xav1erW",
+  "authorUrl": "https://github.com/Xav1erW",
+  "isDesktopOnly": false
 }
