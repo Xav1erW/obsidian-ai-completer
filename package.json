@@ -1,6 +1,6 @@
 {
   "name": "obsidian-ai-completer",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "description": "AI-assisted rewrite workflow for Obsidian",
   "main": "main.js",
   "scripts": {
