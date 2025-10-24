@@ -1,8 +1,45 @@
 /*
-
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
-
-If your plugin does not need CSS, delete this file.
-
 */
+
+.ai-completer-modal {
+	max-height: 80vh;
+}
+
+.ai-completer-modal pre {
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-family: var(--font-monospace);
+}
+
+.ai-completer-preview {
+	max-height: 12rem;
+	overflow: auto;
+	margin-bottom: 1rem;
+}
+
+.ai-completer-output {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+	margin-top: 1rem;
+}
+
+.ai-completer-output-label {
+	font-weight: var(--font-semibold, 600);
+	font-size: var(--font-ui-medium);
+}
+
+.ai-completer-output textarea {
+	min-height: 8rem;
+	max-height: 18rem;
+	resize: vertical;
+	padding: 0.75rem;
+	background-color: var(--background-secondary);
+	border-radius: var(--radius-s);
+	font-family: var(--font-monospace);
+}
+
+.ai-completer-status {
+	margin-top: 0.5rem;
+	color: var(--text-muted);
+}

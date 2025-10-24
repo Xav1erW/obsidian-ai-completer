@@ -14,7 +14,7 @@ class RewriteFlowModal extends Modal {
 	private instructionsInput!: TextAreaComponent;
 	private generateButton!: ButtonComponent;
 	private applyButton!: ButtonComponent;
-	private outputEl!: HTMLPreElement;
+	private outputInput!: TextAreaComponent;
 	private statusEl!: HTMLDivElement;
 
 	private submitted = false;
@@ -79,7 +79,13 @@ class RewriteFlowModal extends Modal {
 		this.generateButton = generateButtonRef;
 		this.applyButton = applyButtonRef;
 
-		this.outputEl = contentEl.createEl('pre', { cls: 'ai-completer-output' }) as HTMLPreElement;
+		const outputContainer = contentEl.createDiv({ cls: 'ai-completer-output' });
+		outputContainer.createEl('label', { text: 'AI response (you can edit before applying)', cls: 'ai-completer-output-label' });
+		this.outputInput = new TextAreaComponent(outputContainer);
+		this.outputInput.setPlaceholder('Generated rewrite will appear here. You can edit it before applying to your note.');
+		this.outputInput.inputEl.rows = 12;
+		this.outputInput.setDisabled(true);
+
 		this.statusEl = contentEl.createEl('div', { cls: 'ai-completer-status' });
 		this.statusEl.setText('Add instructions and click “Send to AI” to generate a rewrite.');
 	}
@@ -107,12 +113,13 @@ class RewriteFlowModal extends Modal {
 		this.generateButton.setDisabled(true);
 		this.generateButton.setButtonText('Requesting…');
 		this.statusEl.setText('Contacting the model, streaming response…');
-		this.outputEl.setText('');
+		this.outputInput.setValue('');
+		this.outputInput.setDisabled(true);
 
 		try {
 			const rewritten = await this.options.requestRewrite(instructions, (partial, done) => {
 				this.latestResult = partial;
-				this.outputEl.setText(partial);
+				this.outputInput.setValue(partial);
 				if (done) {
 					if (partial.trim().length === 0) {
 						this.applyButton.setDisabled(true);
@@ -121,9 +128,11 @@ class RewriteFlowModal extends Modal {
 						this.applyButton.setDisabled(false);
 						this.statusEl.setText('Ready. Review the result and click “Apply to note” when satisfied.');
 					}
+					this.outputInput.setDisabled(false);
 				} else {
 					this.statusEl.setText('Receiving response…');
 					this.applyButton.setDisabled(true);
+					this.outputInput.setDisabled(true);
 				}
 			});
 			this.latestResult = rewritten;
@@ -132,6 +141,7 @@ class RewriteFlowModal extends Modal {
 			new Notice(`AI rewrite failed: ${message}`);
 			this.statusEl.setText(`Request failed: ${message}`);
 			this.applyButton.setDisabled(true);
+			this.outputInput.setDisabled(false);
 		} finally {
 			this.isRequesting = false;
 			this.generateButton.setDisabled(false);
@@ -140,13 +150,14 @@ class RewriteFlowModal extends Modal {
 	}
 
 	private applyResult(): void {
-		if (!this.latestResult) {
-			new Notice('Generate a rewrite before applying it.');
+		const value = this.outputInput.getValue().trim();
+		if (!value) {
+			new Notice('There is no rewritten text to apply. Adjust your prompt or edit the response first.');
 			return;
 		}
 
 		this.submitted = true;
-		this.resolve(this.latestResult);
+		this.resolve(value);
 		this.close();
 	}
 }
