@@ -5,3 +5,17 @@ export interface RewriteRequest {
 	afterText: string;
 	noteTitle?: string;
 }
+
+export interface LLMProvider {
+	id: string;
+	name: string;
+	baseUrl: string;
+	apiKey: string;
+	models: string[];
+	lastModelSync?: string;
+}
+
+export interface ProviderSelection {
+	providerId: string;
+	model: string;
+}

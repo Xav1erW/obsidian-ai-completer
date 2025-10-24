@@ -1,7 +1,7 @@
 import { requestUrl } from 'obsidian';
 import { DEFAULT_SETTINGS } from '../settings';
 import type { AICompleterSettings } from '../settings';
-import type { RewriteRequest } from '../types';
+import type { LLMProvider, RewriteRequest } from '../types';
 
 interface ChatCompletionsResponse {
 	choices?: Array<{
@@ -26,6 +26,15 @@ interface ChatCompletionsStreamResponse {
 	};
 }
 
+interface ModelsResponse {
+	data?: Array<{
+		id?: string;
+	}>;
+	error?: {
+		message?: string;
+	};
+}
+
 export class AIClient {
 	private readonly settingsProvider: () => AICompleterSettings;
 
@@ -33,24 +42,68 @@ export class AIClient {
 		this.settingsProvider = settingsProvider;
 	}
 
-	async rewrite(request: RewriteRequest): Promise<string> {
-		const result = await this.rewriteStreaming(request, () => {
-			// No-op: streaming callback not needed for synchronous usage.
+	async rewrite(request: RewriteRequest, provider: LLMProvider, model: string): Promise<string> {
+		const result = await this.rewriteStreaming(request, provider, model, () => {
+			// No streaming consumer; reuse streaming implementation for consistency.
 		});
 		return result;
 	}
 
 	async rewriteStreaming(
 		request: RewriteRequest,
+		provider: LLMProvider,
+		model: string,
 		onUpdate: (partial: string, done: boolean) => void,
 	): Promise<string> {
+		const trimmedModel = model.trim();
+		if (!trimmedModel) {
+			throw new Error('Select a model before requesting a rewrite.');
+		}
+
 		const { systemPrompt } = this.resolvePrompts();
-		return this.callChatStream(systemPrompt, this.buildUserPrompt(request), onUpdate);
+		return this.callChatStream(provider, trimmedModel, systemPrompt, this.buildUserPrompt(request), onUpdate);
 	}
 
-	async testConnection(): Promise<void> {
+	async testConnection(provider: LLMProvider, model: string): Promise<void> {
+		const trimmedModel = model.trim();
+		if (!trimmedModel) {
+			throw new Error('Select a model before testing the connection.');
+		}
 		const { systemPrompt } = this.resolvePrompts();
-		await this.callChat(systemPrompt, 'Hello');
+		await this.callChat(provider, trimmedModel, systemPrompt, 'Hello');
+	}
+
+	async listModels(provider: LLMProvider): Promise<string[]> {
+		const baseUrl = this.resolveBaseUrl(provider);
+		const authToken = this.getAuthToken(provider);
+
+		const response = await requestUrl({
+			url: `${baseUrl}/models`,
+			method: 'GET',
+			headers: {
+				Authorization: `Bearer ${authToken}`,
+			},
+		});
+
+		if (response.status < 200 || response.status >= 300) {
+			const snippet = response.text?.slice(0, 160) ?? 'Unknown error';
+			throw new Error(`Model listing failed (${response.status}): ${snippet}`);
+		}
+
+		const data: ModelsResponse = response.json ?? (response.text ? (JSON.parse(response.text) as ModelsResponse) : {});
+		if (data.error?.message) {
+			throw new Error(data.error.message);
+		}
+
+		const models = data.data
+			?.map((entry) => (entry?.id ? entry.id.trim() : ''))
+			.filter((id): id is string => Boolean(id));
+
+		if (!models || models.length === 0) {
+			throw new Error('The provider did not return any models.');
+		}
+
+		return Array.from(new Set(models));
 	}
 
 	private resolvePrompts(): { systemPrompt: string } {
@@ -60,28 +113,55 @@ export class AIClient {
 		};
 	}
 
-	private getAuthToken(): string {
-		const settings = this.settingsProvider();
-		const settingsKey = settings.apiKey.trim();
+	private getAuthToken(provider: LLMProvider): string {
+		const providerKey = provider.apiKey.trim();
 		const envKey =
-			typeof process !== 'undefined' && process.env?.OPENAI_API_KEY
+			typeof process !== 'undefined' && typeof process.env?.OPENAI_API_KEY === 'string'
 				? process.env.OPENAI_API_KEY.trim()
 				: '';
-		const apiKey = settingsKey || envKey;
+		const apiKey = providerKey || envKey;
 
 		if (!apiKey) {
-			throw new Error('Provide an API key in the plugin settings or via the OPENAI_API_KEY environment variable.');
+			throw new Error(
+				`Provide an API key for ${provider.name} or set the OPENAI_API_KEY environment variable before sending a request.`,
+			);
 		}
 
 		return apiKey;
 	}
 
-	private async callChat(systemPrompt: string, userPrompt: string): Promise<string> {
-		const settings = this.settingsProvider();
-		const baseUrl = this.resolveBaseUrl(settings);
-		const authToken = this.getAuthToken();
+	private resolveBaseUrl(provider: LLMProvider): string {
+		const fallback = DEFAULT_SETTINGS.providers[0]?.baseUrl ?? 'https://api.openai.com/v1';
+		return (provider.baseUrl.trim() || fallback).replace(/\/+$/, '');
+	}
 
-		const requestBody = this.buildChatRequestBody(settings, systemPrompt, userPrompt);
+	private buildChatRequestBody(
+		settings: AICompleterSettings,
+		model: string,
+		systemPrompt: string,
+		userPrompt: string,
+	): Record<string, unknown> {
+		return {
+			model,
+			temperature: settings.temperature ?? DEFAULT_SETTINGS.temperature,
+			messages: [
+				{ role: 'system', content: systemPrompt },
+				{ role: 'user', content: userPrompt },
+			],
+			max_tokens: 1024,
+		};
+	}
+
+	private async callChat(
+		provider: LLMProvider,
+		model: string,
+		systemPrompt: string,
+		userPrompt: string,
+	): Promise<string> {
+		const settings = this.settingsProvider();
+		const baseUrl = this.resolveBaseUrl(provider);
+		const authToken = this.getAuthToken(provider);
+		const requestBody = this.buildChatRequestBody(settings, model, systemPrompt, userPrompt);
 
 		const response = await requestUrl({
 			url: `${baseUrl}/chat/completions`,
@@ -114,20 +194,22 @@ export class AIClient {
 	}
 
 	private async callChatStream(
+		provider: LLMProvider,
+		model: string,
 		systemPrompt: string,
 		userPrompt: string,
 		onUpdate: (partial: string, done: boolean) => void,
 	): Promise<string> {
 		const settings = this.settingsProvider();
-		const baseUrl = this.resolveBaseUrl(settings);
-		const authToken = this.getAuthToken();
+		const baseUrl = this.resolveBaseUrl(provider);
+		const authToken = this.getAuthToken(provider);
 		const requestBody = {
-			...this.buildChatRequestBody(settings, systemPrompt, userPrompt),
+			...this.buildChatRequestBody(settings, model, systemPrompt, userPrompt),
 			stream: true,
 		};
 
 		if (typeof fetch !== 'function') {
-			const fallback = await this.callChat(systemPrompt, userPrompt);
+			const fallback = await this.callChat(provider, model, systemPrompt, userPrompt);
 			onUpdate(fallback, true);
 			return fallback;
 		}
@@ -142,8 +224,8 @@ export class AIClient {
 				},
 				body: JSON.stringify(requestBody),
 			});
-		} catch (error) {
-			const fallback = await this.callChat(systemPrompt, userPrompt);
+		} catch (_error) {
+			const fallback = await this.callChat(provider, model, systemPrompt, userPrompt);
 			onUpdate(fallback, true);
 			return fallback;
 		}
@@ -155,7 +237,7 @@ export class AIClient {
 
 		const body = response.body;
 		if (!body) {
-			const fallback = await this.callChat(systemPrompt, userPrompt);
+			const fallback = await this.callChat(provider, model, systemPrompt, userPrompt);
 			onUpdate(fallback, true);
 			return fallback;
 		}
@@ -284,26 +366,6 @@ export class AIClient {
 		sections.push('Output requirement: return only the rewritten Markdown without extra commentary.');
 
 		return sections.join('\n\n');
-	}
-
-	private buildChatRequestBody(
-		settings: AICompleterSettings,
-		systemPrompt: string,
-		userPrompt: string,
-	): Record<string, unknown> {
-		return {
-			model: settings.model || DEFAULT_SETTINGS.model,
-			temperature: settings.temperature ?? DEFAULT_SETTINGS.temperature,
-			messages: [
-				{ role: 'system', content: systemPrompt },
-				{ role: 'user', content: userPrompt },
-			],
-			max_tokens: 1024,
-		};
-	}
-
-	private resolveBaseUrl(settings: AICompleterSettings): string {
-		return (settings.baseUrl.trim() || DEFAULT_SETTINGS.baseUrl).replace(/\/+$/, '');
 	}
 }
 

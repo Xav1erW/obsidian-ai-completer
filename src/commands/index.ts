@@ -49,12 +49,31 @@ export function registerCommands(plugin: AICompleterPlugin): void {
 				resolveFileFromView(view) ??
 				resolveFileFromView(plugin.app.workspace.getActiveViewOfType(MarkdownView) ?? null);
 
+			const providers = plugin.settings.providers;
+			if (!providers.length) {
+				new Notice('Configure at least one provider in the settings before requesting rewrites.');
+				return;
+			}
+
+			const initialProviderId = plugin.settings.activeProviderId ?? providers[0].id;
+
 			const rewritten = await promptForRewrite(plugin.app, {
 				selectedText,
 				placeholder: plugin.settings.instructionsPlaceholder,
 				fallbackInstructions: 'Rewrite this passage to improve clarity while preserving the original meaning.',
-				requestRewrite: (instructions, onUpdate) =>
-					plugin.getClient().rewriteStreaming(
+				providers,
+				initialProviderId,
+				initialModel: plugin.settings.activeModel,
+				persistSelection: async (providerId, model) => {
+					await plugin.updateSettings({ activeProviderId: providerId, activeModel: model });
+				},
+				requestRewrite: async ({ instructions, providerId, model, onUpdate }) => {
+					const provider = plugin.getProviderById(providerId);
+					if (!provider) {
+						throw new Error('The selected provider no longer exists. Please choose another provider.');
+					}
+					await plugin.updateSettings({ activeProviderId: providerId, activeModel: model });
+					return plugin.getClient().rewriteStreaming(
 						{
 							instructions,
 							selectedText,
@@ -62,8 +81,11 @@ export function registerCommands(plugin: AICompleterPlugin): void {
 							afterText: context.after,
 							noteTitle: file?.basename,
 						},
+						provider,
+						model,
 						onUpdate,
-					),
+					);
+				},
 			});
 
 			if (!rewritten) {
